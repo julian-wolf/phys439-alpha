@@ -1,3 +1,5 @@
+# -*- coding: utf-8 -*-
+
 import numpy   as np
 import spinmob as sm
 from spectrum import get_spectrum_chn
@@ -93,17 +95,23 @@ def calibrate(f="a*x+b", p="a,b"):
 
     offset     = calib_fit.results[0][1]
     offset_err = calib_fit.results[1][1][1]
+    offset_err = np.sqrt(offset_err)
 
     # location of the true americium peak, minus gold foil stuff
     peak_loc_true = 5.4856 - 0.033
     peak_err_true = 0.001
 
-    peak_fit = fit_peak(spectrum_Am_calib, "norm*G(x-x0,sigma)+bg",
-                        "norm=2400,x0=1042,sigma=18,bg=1", 1025, 1090)
+    # peak_fit = fit_peak(spectrum_Am_calib, "norm*G(x-x0,sigma)+bg",
+    #                     "norm=2400,x0=1042,sigma=18,bg=1", 1025, 1090)
+
+    # temporary values
+    peak_fit = fit_peak(spectra_pulse_calib[0], "norm*G(x-x0,sigma)+bg",
+                        "norm=2400,x0=1290,sigma=18,bg=1", 1288, 1320)
 
     # location of the observed americium peak
     peak_loc_measured = peak_fit.results[0][1]
     peak_err_measured = peak_fit.results[1][1][1]
+    peak_err_measured = np.sqrt(peak_err_measured)
 
     slope     = peak_loc_true / (peak_loc_measured - offset)
     slope_err = np.sqrt((   (peak_err_true) /
