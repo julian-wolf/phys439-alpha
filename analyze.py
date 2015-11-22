@@ -17,6 +17,16 @@ spectra_pulse_calib = [get_spectrum_chn(fname)
 
 spectrum_Am_calib = get_spectrum_chn("data/calib/calib_Am_25mTorr.Chn")
 
+fnames_short_charge  = ["data/short_charge/Tr%03d.Chn" % (n,)
+                        for n in range(270)]
+spectra_short_charge = [get_spectrum_chn(fname)
+                        for fname in fnames_short_charge]
+
+fnames_long_charge   = ["data/long_charge/Tr%03d_long.Chn" % (n,)
+                        for n in range(264)]
+spectra_long_charge  = [get_spectrum_chn(fname)
+                        for fname in fnames_long_charge]
+
 def _gaussian(x, sigma):
     norm_factor  = 1 / (sigma * np.sqrt(2 * np.pi))
     distribution = np.exp(-x**2 / (2 * sigma**2))
