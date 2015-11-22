@@ -112,7 +112,7 @@ def calibrate(f="a*x+b", p="a,b"):
     peak_err_true = 0.001
 
     peak_fit = fit_peak(spectrum_Am_calib, "norm*G(x-x0,sigma)+bg",
-                        "norm=2400,x0=1290,sigma=18,bg=1", 1288, 1320)
+                        "norm=2400,x0=1300,sigma=18,bg=1", 1295, 1320)
 
     # location of the observed americium peak
     peak_loc_measured = peak_fit.results[0][1]

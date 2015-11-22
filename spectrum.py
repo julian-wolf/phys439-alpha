@@ -25,14 +25,13 @@ def get_spectrum_chn(fname_in):
         ascii_secs = np.fromfile(fin, dtype=np.uint8, count=2)
         np.fromfile(fin, dtype=np.uint32, count=1) # real time (20ms)
         live_time_20ms = np.fromfile(fin, dtype=np.uint32, count=1)
-        start_day  = np.fromfile(fin, dtype=np.uint8, count=2)
-        start_date = np.fromfile(fin, dtype=np.uint8, count=6)
+        start_date = np.fromfile(fin, dtype=np.uint8, count=8)
         start_time = np.fromfile(fin, dtype=np.uint8, count=4)
         np.fromfile(fin, dtype=np.uint16, count=1) # channel offset
         n_channels = np.fromfile(fin, dtype=np.uint16, count=1)
         data = np.fromfile(fin, dtype=np.uint32, count=n_channels)
 
-    days  = 10 * start_day[0]  + start_day[1]
+    days  = 10 * start_date[0] + start_date[1]
     hours = 10 * start_time[0] + start_time[1]
     mins  = 10 * start_time[2] + start_time[3]
     secs  = 10 * ascii_secs[0] + ascii_secs[1]
