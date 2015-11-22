@@ -39,3 +39,10 @@ def get_spectrum_chn(fname_in):
     absolute_time = (24 * 60 * 60 * days) + (60 * 60 * hours) + (60 * mins) + (secs);
 
     return Spectrum(data, 0.02*live_time_20ms[0], absolute_time)
+
+def add_spectra(spectra):
+    counts = [spec.counts() for spec in spectra]
+    etimes = [spec._etime   for spec in spectra]
+    atimes = [spec._atime   for spec in spectra]
+
+    return Spectrum(np.sum(counts, 0), np.sum(etimes, 0), np.min(atimes, 0))
