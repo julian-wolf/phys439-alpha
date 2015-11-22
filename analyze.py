@@ -167,7 +167,7 @@ def find_halflife(spectra, f, p, xmin=None, bin_low=500, coarsen=10):
 
     return hl_fit
 
-def _analyze_hl(spectra, xmin, coarsen):
+def _analyze_hl():
     """
     Automates analysis of halflife data
     """
@@ -177,7 +177,8 @@ def _analyze_hl(spectra, xmin, coarsen):
     f_activity = "N0*l1*l2*(exp(-l1*x)-exp(-l2*x))/(l2-l1)"
     p_activity = "N0,l1=%f,l2=%f" % (l1_expected, l2_expected)
 
-    hl_fit = find_halflife(spectra, f_activity, p_activity, xmin=xmin, coarsen=coarsen)
+    hl_fit = find_halflife(spectra_long_charge, f_activity, p_activity,
+                           xmin=5000, coarsen=10)
 
     hl_Pb212 = np.log(2) / hl_fit.results[0][1]
     hl_Bi212 = np.log(2) / hl_fit.results[0][2]
@@ -186,13 +187,7 @@ def _analyze_hl(spectra, xmin, coarsen):
     hl_Bi212_err = np.sqrt(hl_fit.results[1][2][2])*np.log(2) / hl_fit.results[0][2]**2
 
     return ((hl_Pb212, hl_Bi212), (hl_Pb212_err, hl_Bi212_err),
-            hl_fit.reduced_chi_squareds())
-
-def analyze_hl_long_charge():
-    return _analyze_hl(spectra_long_charge, 5000, 10)
-
-def analyze_hl_short_charge():
-    return _analyze_hl(spectra_short_charge, 19000, 12)
+            hl_fit.reduced_chi_squareds()[0])
 
 def print_data_to_columns(sm_fit, fname, residuals=False):
     xmin = sm_fit._settings['xmin']
