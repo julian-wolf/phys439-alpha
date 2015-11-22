@@ -5,7 +5,7 @@ import spinmob as sm
 from spectrum import get_spectrum_chn
 
 # bins used by Maestro
-bins = np.arange(0,2048)
+bins = np.arange(0, 2048)
 
 # data used for calibration
 pulse_heights_calib = np.array([260, 284, 304, 330, 430]) # 380 is all weird-looking
@@ -37,18 +37,24 @@ def _lorentzian(x, gamma):
     distribution = 1 / (x**2 + gamma**2)
     return norm_factor * distribution
 
-def get_yerr(spectrum):
+def get_yerr_counts(spectrum):
     """
-    Gets the poisson error
+    Gets the poisson error in number of counts
     """
     return np.sqrt(spectrum.counts())
+
+def get_yerr_count_rates(spectrum):
+    """
+    Gets the poisson error in count rates
+    """
+    return np.sqrt(spectrum.count_rates())
 
 def fit_peak(spectrum, f, p, xmin, xmax, g={'G' : _gaussian, 'L' : _lorentzian}):
     """
     Fits a function f with parameters p to dataset
     """
     peak_fit = sm.data.fitter(f=f, p=p, g=g, plot_guess=True)
-    yerr     = get_yerr(spectrum)
+    yerr     = get_yerr_counts(spectrum)
 
     peak_fit.set_data(xdata=bins, ydata=spectrum.counts(), eydata=yerr)
     peak_fit.set(xmin=xmin, xmax=xmax)
@@ -58,7 +64,8 @@ def fit_peak(spectrum, f, p, xmin, xmax, g={'G' : _gaussian, 'L' : _lorentzian})
 
 def calibrate(f="a*x+b", p="a,b"):
     """
-    Automate calibration of the apparatus
+    Automate calibration of the apparatus;
+    returns function which converts bin numbers to energies
     """
     # first-guess locations of peaks
     x0 = np.array([709, 777.3, 837, 914.5, 1190])
@@ -135,6 +142,57 @@ def calibrate(f="a*x+b", p="a,b"):
         return (energy, energy_err)
 
     return bin_to_energy
+
+def _get_total_count_rates(spectra, bin_low):
+    rates  = [np.sum(spec.count_rates()[bin_low:]) for spec in spectra]
+    errors = [np.mean(get_yerr_count_rates(spec)[bin_low:]) for spec in spectra]
+    return (rates, errors)
+
+def _get_total_elapsed_times(spectra):
+    atime_first = spectra[0].absolute_time()
+    return [spec.absolute_time() - atime_first for spec in spectra]
+
+def find_halflife(spectra, f, p, xmin=None, bin_low=500, coarsen=10):
+    """
+    Finds the half-life of a sample based on the corresponding spectra
+    """
+    (count_rates, count_errs) = _get_total_count_rates(spectra, bin_low)
+    elapsed_times = _get_total_elapsed_times(spectra)
+
+    hl_fit = sm.data.fitter(f=f, p=p)
+    hl_fit.set_data(xdata=elapsed_times, ydata=count_rates, eydata=count_errs)
+    hl_fit.set(coarsen=coarsen)
+    if not xmin is None: hl_fit.set(xmin=xmin)
+    hl_fit.fit()
+
+    return hl_fit
+
+def _analyze_hl(spectra, xmin, coarsen):
+    """
+    Automates analysis of halflife data
+    """
+    l1_expected = np.log(2) / (10.64 * 60 * 60)
+    l2_expected = np.log(2) / (60.60 * 60)
+
+    f_activity = "N0*l1*l2*(exp(-l1*x)-exp(-l2*x))/(l2-l1)"
+    p_activity = "N0,l1=%f,l2=%f" % (l1_expected, l2_expected)
+
+    hl_fit = find_halflife(spectra, f_activity, p_activity, xmin=xmin, coarsen=coarsen)
+
+    hl_Pb212 = np.log(2) / hl_fit.results[0][1]
+    hl_Bi212 = np.log(2) / hl_fit.results[0][2]
+
+    hl_Pb212_err = np.sqrt(hl_fit.results[1][1][1])*np.log(2) / hl_fit.results[0][1]**2
+    hl_Bi212_err = np.sqrt(hl_fit.results[1][2][2])*np.log(2) / hl_fit.results[0][2]**2
+
+    return ((hl_Pb212, hl_Bi212), (hl_Pb212_err, hl_Bi212_err),
+            hl_fit.reduced_chi_squareds())
+
+def analyze_hl_long_charge():
+    return _analyze_hl(spectra_long_charge, 5000, 10)
+
+def analyze_hl_short_charge():
+    return _analyze_hl(spectra_short_charge, 19000, 12)
 
 def print_data_to_columns(sm_fit, fname, residuals=False):
     xmin = sm_fit._settings['xmin']
