@@ -10,12 +10,12 @@ bins = np.arange(0,2048)
 # data used for calibration
 pulse_heights_calib = np.array([260, 284, 304, 330, 430]) # 380 is all weird-looking
 
-fnames_pulse_calib  = ["data/calib" + str(height) + ".Chn"
+fnames_pulse_calib  = ["data/calib/calib" + str(height) + ".Chn"
                        for height in pulse_heights_calib]
 spectra_pulse_calib = [get_spectrum_chn(fname)
                        for fname in fnames_pulse_calib]
 
-spectrum_Am_calib = get_spectrum_chn("data/calib_Am.Chn")
+spectrum_Am_calib = get_spectrum_chn("data/calib/calib_Am_25mTorr.Chn")
 
 def _gaussian(x, sigma):
     norm_factor  = 1 / (sigma * np.sqrt(2 * np.pi))
@@ -101,11 +101,7 @@ def calibrate(f="a*x+b", p="a,b"):
     peak_loc_true = 5.4856 - 0.033
     peak_err_true = 0.001
 
-    # peak_fit = fit_peak(spectrum_Am_calib, "norm*G(x-x0,sigma)+bg",
-    #                     "norm=2400,x0=1042,sigma=18,bg=1", 1025, 1090)
-
-    # temporary values
-    peak_fit = fit_peak(spectra_pulse_calib[0], "norm*G(x-x0,sigma)+bg",
+    peak_fit = fit_peak(spectrum_Am_calib, "norm*G(x-x0,sigma)+bg",
                         "norm=2400,x0=1290,sigma=18,bg=1", 1288, 1320)
 
     # location of the observed americium peak
@@ -130,3 +126,25 @@ def calibrate(f="a*x+b", p="a,b"):
 
     return bin_to_energy
 
+def print_data_to_columns(sm_fit, fname, residuals=False):
+    xmin = sm_fit._settings['xmin']
+    xmax = sm_fit._settings['xmax']
+
+    xdata  = sm_fit.get_data()[0][0]
+    i_used = (xdata >= xmin) & (xdata <= xmax)
+    xdata  = xdata[i_used]
+
+    if not residuals:
+        ydata  = sm_fit.get_data()[1][0][i_used]
+        eydata = sm_fit.get_data()[2][0][i_used]
+    else:
+        ydata  = sm_fit.studentized_residuals()[0]
+        eydata = (0 * ydata) + 1
+
+    with open(fname, 'w') as f_out:
+        n_data = len(xdata);
+        for i in range(n_data):
+            entry = "%f\t%f\t%f\n" % (xdata[i], ydata[i], eydata[i])
+            f_out.write(entry)
+
+    return
