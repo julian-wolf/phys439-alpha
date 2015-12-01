@@ -2,30 +2,42 @@
 
 import numpy   as np
 import spinmob as sm
-from spectrum import get_spectrum_chn
+from spectrum import get_spectrum_chn, add_spectra
 
 # bins used by Maestro
 bins = np.arange(0, 2048)
 
 # data used for calibration
-pulse_heights_calib = np.array([260, 284, 304, 330, 430]) # 380 is all weird-looking
+pulse_heights_calib_old = np.array([260, 284, 304, 330, 430]) # 380 is all weird-looking
+pulse_heights_calib_new = np.array([110, 180, 250, 360])
 
-fnames_pulse_calib  = ["data/calib/calib" + str(height) + ".Chn"
-                       for height in pulse_heights_calib]
-spectra_pulse_calib = [get_spectrum_chn(fname)
-                       for fname in fnames_pulse_calib]
+# for differential pressure (stopping power) measurement
+fnames_pulse_calib_old  = ["data/calib_old/calib" + str(height) + ".Chn"
+                           for height in pulse_heights_calib_old]
+spectra_pulse_calib_old = [get_spectrum_chn(fname)
+                           for fname in fnames_pulse_calib_old]
 
-spectrum_Am_calib = get_spectrum_chn("data/calib/calib_Am_25mTorr.Chn")
+# for energy, halflife, and branching ratio measurements
+fnames_pulse_calib_new  = ["data/calib_new/calib_" + str(height) + ".Chn"
+                           for height in pulse_heights_calib_new]
+spectra_pulse_calib_new = [get_spectrum_chn(fname)
+                           for fname in fnames_pulse_calib_new]
 
-fnames_short_charge  = ["data/short_charge/Tr%03d.Chn" % (n,)
-                        for n in range(270)]
-spectra_short_charge = [get_spectrum_chn(fname)
-                        for fname in fnames_short_charge]
+# for differential pressure (stopping power) measurement
+spectrum_Am_calib_old = get_spectrum_chn("data/calib_old/calib_Am_25mTorr.Chn")
 
-fnames_long_charge   = ["data/long_charge/Tr%03d_long.Chn" % (n,)
-                        for n in range(264)]
-spectra_long_charge  = [get_spectrum_chn(fname)
-                        for fname in fnames_long_charge]
+# for energy, halflife, and branching ratio measurements
+spectrum_Am_calib_new = get_spectrum_chn("data/calib_new/calib_Am.Chn")
+
+fnames_Tr  = ["data/long_charge/tr_%03d.Chn" % (n,) for n in range(264)]
+spectra_Tr = [get_spectrum_chn(fname) for fname in fnames_Tr]
+
+# in mBar
+pressures_stopping = np.arange(200, 800, 50)
+
+fnames_stopping  = ["data/pressures/SP_" + str(p) + "mb.Chn"
+                    for p in pressures_stopping]
+spectra_stopping = [get_spectrum_chn(fname) for fname in fnames_stopping]
 
 def _gaussian(x, sigma):
     norm_factor  = 1 / (sigma * np.sqrt(2 * np.pi))
@@ -47,7 +59,7 @@ def get_yerr_count_rates(spectrum):
     """
     Gets the poisson error in count rates
     """
-    return np.sqrt(spectrum.count_rates())
+    return np.sqrt(spectrum.counts()) / spectrum._etime
 
 def fit_peak(spectrum, f, p, xmin, xmax, g={'G' : _gaussian, 'L' : _lorentzian}):
     """
@@ -62,13 +74,22 @@ def fit_peak(spectrum, f, p, xmin, xmax, g={'G' : _gaussian, 'L' : _lorentzian})
 
     return peak_fit
 
-def calibrate(f="a*x+b", p="a,b"):
+def calibrate(use_old, f="a*x+b", p="a,b"):
     """
     Automate calibration of the apparatus;
     returns function which converts bin numbers to energies
     """
     # first-guess locations of peaks
-    x0 = np.array([709, 777.3, 837, 914.5, 1190])
+    if use_old:
+        spectra_pulse = spectra_pulse_calib_old
+        spectrum_Am   = spectrum_Am_calib_old
+        x0 = np.array([709, 777.3, 837, 914.5, 1190])
+        pulse_heights = pulse_heights_calib_old
+    else:
+        spectra_pulse = spectra_pulse_calib_new
+        spectrum_Am   = add_spectra(spectra_pulse)
+        x0 = np.array([258, 438, 620, 910, 1033])
+        pulse_heights = pulse_heights_calib_new
 
     xlim_offset = 22
     xmin = x0 - xlim_offset
@@ -82,12 +103,13 @@ def calibrate(f="a*x+b", p="a,b"):
     # location of x0 in parameter list
     peak_loc_ind = 5
 
-    peak_loc  = np.zeros(len(spectra_pulse_calib))
-    peak_err  = np.zeros(len(spectra_pulse_calib))
-    good_fits = [True] * len(spectra_pulse_calib)
-    for i in range(len(spectra_pulse_calib)):
-        peak_fit = fit_peak(spectra_pulse_calib[i], fit_func,
-                            params[i], xmin[i], xmax[i])
+    n_fits = len(spectra_pulse)
+
+    peak_loc  = np.zeros(n_fits)
+    peak_err  = np.zeros(n_fits)
+    good_fits = [True] * n_fits
+    for i in range(n_fits):
+        peak_fit = fit_peak(spectra_pulse[i], fit_func, params[i], xmin[i], xmax[i])
 
         # ignore peaks whose fits don't converge to simplify debugging
         if peak_fit.results[1] is None:
@@ -100,7 +122,7 @@ def calibrate(f="a*x+b", p="a,b"):
 
     good_fits = np.array(good_fits, dtype=bool)
 
-    pulse_heights = pulse_heights_calib[good_fits]
+    pulse_heights = pulse_heights[good_fits]
     peak_loc = peak_loc[good_fits]
     peak_err = peak_err[good_fits]
 
@@ -118,8 +140,17 @@ def calibrate(f="a*x+b", p="a,b"):
     peak_loc_true = 5.4856 - 0.033
     peak_err_true = 0.001
 
-    peak_fit = fit_peak(spectrum_Am_calib, "norm*G(x-x0,sigma)+bg",
-                        "norm=2400,x0=1300,sigma=18,bg=1", 1295, 1320)
+    if use_old:
+        p_peak    = "norm=2400,x0=1300,sigma=18,bg=1"
+        xmin_peak = 1295
+        xmax_peak = 1320
+    else:
+        p_peak    = "norm=4100,x0=1181,sigma=2,bg=1"
+        xmin_peak = 1177
+        xmax_peak = 1205
+
+    peak_fit = fit_peak(spectrum_Am, "norm*G(x-x0,sigma)+bg",
+                        p_peak, xmin_peak, xmax_peak)
 
     # location of the observed americium peak
     peak_loc_measured = peak_fit.results[0][1]
@@ -145,7 +176,8 @@ def calibrate(f="a*x+b", p="a,b"):
 
 def _get_total_count_rates(spectra, bin_low):
     rates  = [np.sum(spec.count_rates()[bin_low:]) for spec in spectra]
-    errors = [np.mean(get_yerr_count_rates(spec)[bin_low:]) for spec in spectra]
+    errors = [np.sqrt(np.sum(spec.counts()[bin_low:])) / spec._etime
+              for spec in spectra]
     return (rates, errors)
 
 def _get_total_elapsed_times(spectra):
@@ -167,18 +199,19 @@ def find_halflife(spectra, f, p, xmin=None, bin_low=500, coarsen=10):
 
     return hl_fit
 
-def _analyze_hl():
+# TODO: fudge initial values; figure out fit
+def analyze_hl():
     """
     Automates analysis of halflife data
     """
-    l1_expected = np.log(2) / (10.64 * 60 * 60)
-    l2_expected = np.log(2) / (60.60 * 60)
+    l1_expected = np.log(2) / (10.64 * 60 * 60) # lambda for Pb212
+    l2_expected = np.log(2) / (60.60 * 60)      # lambda for Bi212
 
     f_activity = "N0*l1*l2*(exp(-l1*x)-exp(-l2*x))/(l2-l1)"
     p_activity = "N0,l1=%f,l2=%f" % (l1_expected, l2_expected)
 
-    hl_fit = find_halflife(spectra_long_charge, f_activity, p_activity,
-                           xmin=5000, coarsen=10)
+    hl_fit = find_halflife(spectra_Tr, f_activity, p_activity,
+                           xmin=5000, coarsen=8)
 
     hl_Pb212 = np.log(2) / hl_fit.results[0][1]
     hl_Bi212 = np.log(2) / hl_fit.results[0][2]
@@ -188,6 +221,57 @@ def _analyze_hl():
 
     return ((hl_Pb212, hl_Bi212), (hl_Pb212_err, hl_Bi212_err),
             hl_fit.reduced_chi_squareds()[0])
+
+def analyze_energy(spectra=spectra_Tr, bin_to_energy=None):
+    """
+    Automates analysis of alpha energy and branching ratio data
+    """
+    spectrum_sum = add_spectra(spectra)
+
+    # TODO: all these various parameters'll need to be updated for new calib data
+    xmin=5.4
+    xmax=6.6
+
+    # x0 = [5.607, 5.769, 6.051, 6.090, 8.794]
+    x0 = [5.607, 5.769, 6.051, 6.090]
+    n0 = [20,    20,    200,   10]
+    s0 = [0.003, 0.003, 0.004, 0.001]
+    c0 = [1,     1,     1,     1]
+    t0 = [100,   100,   100,   1]
+
+    fit_func   = ""
+    parameters = ""
+    for i in range(len(x0)):
+        fit_func   += "n"  + str(i) + "*G(x-x" + str(i) + ",s" + str(i) + ")" + \
+                      "*(1+c" + str(i) + "*exp(t" + str(i) + "*(x" + str(i) + "-x)))+"
+        parameters += "n"  + str(i) + "=" + str(n0[i]) + \
+                      ",x" + str(i) + "=" + str(x0[i]) + \
+                      ",s" + str(i) + "=" + str(s0[i]) + \
+                      ",c" + str(i) + "=" + str(c0[i]) + \
+                      ",t" + str(i) + "=" + str(t0[i]) + ","
+    fit_func   += "bg"
+    parameters += "bg=1"
+
+    # save having to run calibrate() each time
+    if bin_to_energy is None: bin_to_energy = calibrate(use_old=False)
+
+    energy_bins = np.asarray([bin_to_energy(bin) for bin in bins])
+
+    e_fit = sm.data.fitter(f=fit_func, p=parameters, g={'G' : _gaussian})
+    e_fit.set_data( xdata=energy_bins[:,0],  ydata=spectrum_sum.counts(),
+                   exdata=energy_bins[:,1], eydata=get_yerr_counts(spectrum_sum))
+    e_fit.set(xmin=xmin, xmax=xmax)
+    e_fit.fit()
+
+    return e_fit
+
+    ndof_per_peak = 5
+    n0_inds = ndof_per_peak * np.arange(len(x0))
+    x0_inds = n0_inds + 1
+    s0_inds = n0_inds + 2
+
+def analyze_stopping(spectra=spectra_stopping, bin_to_energy=None):
+    pass
 
 def print_data_to_columns(sm_fit, fname, residuals=False):
     xmin = sm_fit._settings['xmin']

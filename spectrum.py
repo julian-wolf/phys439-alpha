@@ -40,9 +40,11 @@ def get_spectrum_chn(fname_in):
 
     return Spectrum(data, 0.02*live_time_20ms[0], absolute_time)
 
-def add_spectra(spectra):
+def add_spectra(spectra, chronological=False):
     counts = [spec.counts() for spec in spectra]
     etimes = [spec._etime   for spec in spectra]
-    atimes = [spec._atime   for spec in spectra]
 
-    return Spectrum(np.sum(counts, 0), np.sum(etimes, 0), np.min(atimes, 0))
+    if chronological: start_time = spectra[0]._atime
+    else:             start_time = np.min([spec._atime for spec in spectra], 0)
+
+    return Spectrum(np.sum(counts, 0), np.sum(etimes, 0), start_time)
