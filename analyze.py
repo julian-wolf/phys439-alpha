@@ -29,11 +29,8 @@ spectrum_Am_calib_old = get_spectrum_chn("data/calib_old/calib_Am_25mTorr.Chn")
 # for energy, halflife, and branching ratio measurements
 spectrum_Am_calib_new = get_spectrum_chn("data/calib_new/calib_Am.Chn")
 
-fnames_Tr_new  = ["data/long_charge/tr_%03d.Chn" % (n,) for n in range(288)]
-spectra_Tr_new = [get_spectrum_chn(fname) for fname in fnames_Tr_new[78:223]]
-
-fnames_Tr_old  = ["data/long_charge_old/Tr%03d_long.Chn" % (n,) for n in range(264)]
-spectra_Tr_old = [get_spectrum_chn(fname) for fname in fnames_Tr_old]
+fnames_Tr  = ["data/long_charge/tr_%03d.Chn" % (n,) for n in range(288)]
+spectra_Tr = [get_spectrum_chn(fname) for fname in fnames_Tr[78:223]]
 
 # in mBar
 pressures_stopping = np.arange(750, 150, -50)
@@ -77,7 +74,7 @@ def fit_peak(spectrum, f, p, xmin, xmax, g={'G' : _gaussian, 'L' : _lorentzian})
 
     return peak_fit
 
-def calibrate_old(f="a*x+b", p="a,b", peak_fit=None):
+def calibrate_old(f="a*x+b", p="a,b"):
     """
     Automates calibration of the apparatus;
     returns function which converts bin numbers to energies
@@ -166,12 +163,12 @@ def calibrate_old(f="a*x+b", p="a,b", peak_fit=None):
 
     return bin_to_energy
 
-def calibrate_new(f="a*x+b", p="a,b", peak_fit=None):
+def calibrate_new(f="a*x+b", p="a,b"):
     """
     Automates calibration of the apparatus;
     returns function which converts bin numbers to energies
     """
-    spectrum_sum = add_spectra(spectra_Tr_new, chronological=True)
+    spectrum_sum = add_spectra(spectra_Tr, chronological=True)
 
     # true peak locations
     x0 = [5.607, 5.769, 6.051, 6.090, 8.794]
@@ -226,22 +223,7 @@ def _get_total_elapsed_times(spectra):
     atime_first = spectra[0].absolute_time()
     return [spec.absolute_time() - atime_first for spec in spectra]
 
-def find_halflife(spectra, f, p, xmin=None, bin_low=500, coarsen=10):
-    """
-    Finds the half-life of a sample based on the corresponding spectra
-    """
-    (count_rates, count_errs) = _get_total_count_rates(spectra, bin_low)
-    elapsed_times = _get_total_elapsed_times(spectra) # in seconds
-
-    hl_fit = sm.data.fitter(f=f, p=p)
-    hl_fit.set_data(xdata=elapsed_times, ydata=count_rates, eydata=count_errs)
-    hl_fit.set(coarsen=coarsen)
-    if not xmin is None: hl_fit.set(xmin=xmin)
-    hl_fit.fit()
-
-    return hl_fit
-
-def analyze_hl(spectra=spectra_Tr_new):
+def analyze_hl(spectra=spectra_Tr):
     """
     Automates analysis of halflife data
     """
@@ -251,8 +233,13 @@ def analyze_hl(spectra=spectra_Tr_new):
     f_activity = "N0*l1*l2*(exp(-l1*x)-exp(-l2*x))/(l2-l1)+N2*l2*exp(-l2*x)"
     p_activity = "N0,l1=%f,l2=%f,N2" % (l1_expected, l2_expected)
 
-    hl_fit = find_halflife(spectra, f_activity, p_activity,
-                           xmin=0, coarsen=3)
+    (count_rates, count_errs) = _get_total_count_rates(spectra, 500)
+    elapsed_times = _get_total_elapsed_times(spectra) # in seconds
+
+    hl_fit = sm.data.fitter(f=f, p=p)
+    hl_fit.set_data(xdata=elapsed_times, ydata=count_rates, eydata=count_errs)
+    hl_fit.set(coarsen=3)
+    hl_fit.fit()
 
     # print "n0 = ", hl_fit.results[0][0], " ± ", np.sqrt(hl_fit.results[1][0][0])
     # print "n2 = ", hl_fit.results[0][3], " ± ", np.sqrt(hl_fit.results[1][3][3])
@@ -267,15 +254,15 @@ def analyze_hl(spectra=spectra_Tr_new):
             (hl_Pb212_err / (60 * 60), hl_Bi212_err / (60)),
             hl_fit.reduced_chi_squareds()[0])
 
-def analyze_energy(spectra=spectra_Tr_new, bin_to_energy=None):
+def analyze_energy_and_branching(spectra=spectra_Tr, bin_to_energy=None):
     """
     Automates analysis of alpha energy and branching ratio data
     """
     spectrum_sum = add_spectra(spectra, chronological=True)
 
     x0 = [5.607, 5.769, 6.051, 6.090, 8.794]
-    n0 = [20,    20,    200,   10,    400]
-    s0 = [0.003, 0.003, 0.004, 0.001, 0.005]
+    n0 = [0.4,   0.7,   12,    1.5,   30]
+    s0 = [0.005, 0.005, 0.01,  0.008, 0.01]
     c0 = [1,     1,     1,     1,     1]
     t0 = [100,   100,   100,   1,     100]
 
@@ -306,12 +293,48 @@ def analyze_energy(spectra=spectra_Tr_new, bin_to_energy=None):
     e_fit.set(xmin=xmin, xmax=xmax)
     e_fit.fit()
 
-    return e_fit
-
     ndof_per_peak = 5
     n0_inds = ndof_per_peak * np.arange(len(x0))
     x0_inds = n0_inds + 1
     s0_inds = n0_inds + 2
+
+    result_vals   =           e_fit.results[0]
+    result_errs = np.diagonal(e_fit.results[1])
+
+    # for finding the peak locations
+    x0_vals = result_vals[x0_inds]
+    x0_errs = result_errs[x0_inds]
+
+    peak_locs = (x0_vals, x0_errs)
+
+    # for finding the peak areas
+    n0_vals = result_vals[n0_inds]
+    n0_errs = result_errs[n0_inds]
+
+    peak_areas = (n0_vals, n0_errs)
+
+    # might want peak widths for something
+    s0_vals = result_vals[s0_inds]
+    s0_errs = result_errs[s0_inds]
+
+    return (peak_locs, peak_areas)
+
+def analyze_energy(spectra=spectra_Tr, bin_to_energy=None):
+    (peak_locs, _) = analyze_energy_and_branching(spectra, bin_to_energy)
+    return peak_locs
+
+def analyze_branching(spectra=spectra_Tr, bin_to_energy=None):
+    (_, (n0_vals, n0_errs)) = analyze_energy_and_branching(spectra, bin_to_energy)
+    total_areas   = np.sum(n0_vals)
+    partial_areas = np.sum(n0_vals[:-1])
+
+    total_ratios   = np.array([    partial_areas / total_areas,
+                               1 - partial_areas / total_areas])
+    partial_ratios = np.array([area / partial_areas for area in n0_vals[:-1]])
+
+    return (total_ratios, partial_ratios)
+
+    return ((total_ratios, total_errs), (partial_ratios, partial_errs))
 
 def analyze_stopping(spectra=spectra_stopping, bin_to_energy=None):
     """
@@ -404,8 +427,6 @@ def analyze_stopping(spectra=spectra_stopping, bin_to_energy=None):
     stopping_fit.set_data( xdata=t,      ydata=peak_loc,
                           exdata=t_err, eydata=peak_err)
     stopping_fit.fit()
-
-
 
 def print_data_to_columns(sm_fit, fname, residuals=False):
     xmin = sm_fit._settings['xmin']
