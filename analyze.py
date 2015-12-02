@@ -9,7 +9,7 @@ bins = np.arange(0, 2048)
 
 # data used for calibration
 pulse_heights_calib_old = np.array([260, 284, 304, 330, 430]) # 380 is all weird-looking
-pulse_heights_calib_new = np.array([110, 180, 250, 360])
+pulse_heights_calib_new = np.array([110, 180, 250, 360])      # 320 '' ''   ''  -  ''
 
 # for differential pressure (stopping power) measurement
 fnames_pulse_calib_old  = ["data/calib_old/calib" + str(height) + ".Chn"
@@ -30,7 +30,7 @@ spectrum_Am_calib_old = get_spectrum_chn("data/calib_old/calib_Am_25mTorr.Chn")
 spectrum_Am_calib_new = get_spectrum_chn("data/calib_new/calib_Am.Chn")
 
 fnames_Tr_new  = ["data/long_charge/tr_%03d.Chn" % (n,) for n in range(288)]
-spectra_Tr_new = [get_spectrum_chn(fname) for fname in fnames_Tr_new]
+spectra_Tr_new = [get_spectrum_chn(fname) for fname in fnames_Tr_new[78:223]]
 
 fnames_Tr_old  = ["data/long_charge_old/Tr%03d_long.Chn" % (n,) for n in range(264)]
 spectra_Tr_old = [get_spectrum_chn(fname) for fname in fnames_Tr_old]
@@ -77,22 +77,16 @@ def fit_peak(spectrum, f, p, xmin, xmax, g={'G' : _gaussian, 'L' : _lorentzian})
 
     return peak_fit
 
-def calibrate(use_old, f="a*x+b", p="a,b"):
+def calibrate_old(f="a*x+b", p="a,b", peak_fit=None):
     """
     Automates calibration of the apparatus;
     returns function which converts bin numbers to energies
     """
     # first-guess locations of peaks
-    if use_old:
-        spectra_pulse = spectra_pulse_calib_old
-        spectrum_Am   = spectrum_Am_calib_old
-        x0 = np.array([709, 777.3, 837, 914.5, 1190])
-        pulse_heights = pulse_heights_calib_old
-    else:
-        spectra_pulse = spectra_pulse_calib_new
-        spectrum_Am   = add_spectra(spectra_pulse)
-        x0 = np.array([258, 438, 620, 910, 1033])
-        pulse_heights = pulse_heights_calib_new
+    spectra_pulse = spectra_pulse_calib_old
+    spectrum_Am   = spectrum_Am_calib_old
+    x0 = np.array([709, 777.3, 837, 914.5, 1190])
+    pulse_heights = pulse_heights_calib_old
 
     xlim_offset = 22
     xmin = x0 - xlim_offset
@@ -143,14 +137,9 @@ def calibrate(use_old, f="a*x+b", p="a,b"):
     peak_loc_true = 5.4856 - 0.033
     peak_err_true = 0.001
 
-    if use_old:
-        p_peak    = "norm=2400,x0=1300,sigma=18,bg=1"
-        xmin_peak = 1295
-        xmax_peak = 1320
-    else:
-        p_peak    = "norm=4100,x0=1181,sigma=2,bg=1"
-        xmin_peak = 1177
-        xmax_peak = 1205
+    p_peak    = "norm=2400,x0=1300,sigma=18,bg=1"
+    xmin_peak = 1295
+    xmax_peak = 1320
 
     peak_fit = fit_peak(spectrum_Am, "norm*G(x-x0,sigma)+bg",
                         p_peak, xmin_peak, xmax_peak)
@@ -173,6 +162,56 @@ def calibrate(use_old, f="a*x+b", p="a,b"):
         energy     = slope * (bin - offset);
         energy_err = np.sqrt((bin - offset)**2 *  slope_err**2 +
                              (slope)**2        * offset_err**2)
+        return (energy, energy_err)
+
+    return bin_to_energy
+
+def calibrate_new(f="a*x+b", p="a,b", peak_fit=None):
+    """
+    Automates calibration of the apparatus;
+    returns function which converts bin numbers to energies
+    """
+    spectrum_sum = add_spectra(spectra_Tr_new, chronological=True)
+
+    # true peak locations
+    x0 = [5.607, 5.769, 6.051, 6.090, 8.794]
+
+    x0_init = [1188, 1224, 1285,  1294, 1882]
+    n0_init = [450,  450,  12000, 300,  20000]
+    s0_init = [3,    3,    4.5,   1,    5]
+
+    fit_func   = ""
+    parameters = ""
+    for i in range(len(x0_init)):
+        fit_func   += "n"  + str(i) + "*G(x-x" + str(i) + ",s" + str(i) + ")+"
+        parameters += "n"  + str(i) + "=" + str(n0_init[i]) + \
+                      ",x" + str(i) + "=" + str(x0_init[i]) + \
+                      ",s" + str(i) + "=" + str(s0_init[i]) + ","
+    fit_func   += "bg"
+    parameters += "bg=1"
+
+    e_fit_init = sm.data.fitter(f=fit_func, p=parameters, g={'G' : _gaussian})
+    e_fit_init.set_data(xdata=bins, ydata=spectrum_sum.counts(),
+                        eydata=get_yerr_counts(spectrum_sum))
+    e_fit_init.set(xmin=1170, xmax=1900)
+    e_fit_init.fit()
+
+    peak_inds = np.arange(1, 3*len(x0_init), 3)
+
+    x0_found = e_fit_init.results[0][peak_inds]
+
+    calib_fit = sm.data.fitter(f="a*x+b", p="a,b")
+    calib_fit.set_data(xdata=x0_found, ydata=x0, eydata=0.01)
+    calib_fit.fit()
+
+    slope     = calib_fit.results[0][0]
+    intercept = calib_fit.results[0][1]
+    slope_err     = calib_fit.results[1][0][0]
+    intercept_err = calib_fit.results[1][1][1]
+
+    def bin_to_energy(bin):
+        energy = slope * bin + intercept
+        energy_err = np.sqrt(bin**2 * slope_err**2 + intercept_err**2)
         return (energy, energy_err)
 
     return bin_to_energy
@@ -228,23 +267,17 @@ def analyze_hl(spectra=spectra_Tr_new):
             (hl_Pb212_err / (60 * 60), hl_Bi212_err / (60)),
             hl_fit.reduced_chi_squareds()[0])
 
-# TODO: update fit parameters for new calibration
 def analyze_energy(spectra=spectra_Tr_new, bin_to_energy=None):
     """
     Automates analysis of alpha energy and branching ratio data
     """
     spectrum_sum = add_spectra(spectra, chronological=True)
 
-    # TODO: all these various parameters'll need to be updated for new calib data
-    xmin=5.4
-    xmax=6.6
-
-    # x0 = [5.607, 5.769, 6.051, 6.090, 8.794]
-    x0 = [5.607, 5.769, 6.051, 6.090]
-    n0 = [20,    20,    200,   10]
-    s0 = [0.003, 0.003, 0.004, 0.001]
-    c0 = [1,     1,     1,     1]
-    t0 = [100,   100,   100,   1]
+    x0 = [5.607, 5.769, 6.051, 6.090, 8.794]
+    n0 = [20,    20,    200,   10,    400]
+    s0 = [0.003, 0.003, 0.004, 0.001, 0.005]
+    c0 = [1,     1,     1,     1,     1]
+    t0 = [100,   100,   100,   1,     100]
 
     fit_func   = ""
     parameters = ""
@@ -260,9 +293,12 @@ def analyze_energy(spectra=spectra_Tr_new, bin_to_energy=None):
     parameters += "bg=1"
 
     # save having to run calibrate() each time
-    if bin_to_energy is None: bin_to_energy = calibrate(use_old=False)
+    if bin_to_energy is None: bin_to_energy = calibrate_new()
 
     energy_bins = np.asarray([bin_to_energy(bin) for bin in bins])
+
+    xmin = bin_to_energy(1170)[0]
+    xmax = bin_to_energy(1900)[0]
 
     e_fit = sm.data.fitter(f=fit_func, p=parameters, g={'G' : _gaussian})
     e_fit.set_data( xdata=energy_bins[:,0],  ydata=spectrum_sum.counts(),
@@ -312,7 +348,7 @@ def analyze_stopping(spectra=spectra_stopping, bin_to_energy=None):
     t_err = 100 * thicknesses[:,1]
 
     # save having to run calibrate() each time
-    if bin_to_energy is None: bin_to_energy = calibrate(use_old=False)
+    if bin_to_energy is None: bin_to_energy = calibrate_new()
 
     x0 = [35, 200, 328, 453, 541, 646, 727, 801, 867, 941, 958, 1072]
     x0 = np.array([bin_to_energy(x)[0] for x in x0])
