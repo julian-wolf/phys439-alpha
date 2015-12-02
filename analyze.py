@@ -29,8 +29,11 @@ spectrum_Am_calib_old = get_spectrum_chn("data/calib_old/calib_Am_25mTorr.Chn")
 # for energy, halflife, and branching ratio measurements
 spectrum_Am_calib_new = get_spectrum_chn("data/calib_new/calib_Am.Chn")
 
-fnames_Tr  = ["data/long_charge/tr_%03d.Chn" % (n,) for n in range(264)]
-spectra_Tr = [get_spectrum_chn(fname) for fname in fnames_Tr]
+fnames_Tr_new  = ["data/long_charge/tr_%03d.Chn" % (n,) for n in range(288)]
+spectra_Tr_new = [get_spectrum_chn(fname) for fname in fnames_Tr_new]
+
+fnames_Tr_old  = ["data/long_charge_old/Tr%03d_long.Chn" % (n,) for n in range(264)]
+spectra_Tr_old = [get_spectrum_chn(fname) for fname in fnames_Tr_old]
 
 # in mBar
 pressures_stopping = np.arange(750, 150, -50)
@@ -189,7 +192,7 @@ def find_halflife(spectra, f, p, xmin=None, bin_low=500, coarsen=10):
     Finds the half-life of a sample based on the corresponding spectra
     """
     (count_rates, count_errs) = _get_total_count_rates(spectra, bin_low)
-    elapsed_times = _get_total_elapsed_times(spectra)
+    elapsed_times = _get_total_elapsed_times(spectra) # in seconds
 
     hl_fit = sm.data.fitter(f=f, p=p)
     hl_fit.set_data(xdata=elapsed_times, ydata=count_rates, eydata=count_errs)
@@ -199,19 +202,21 @@ def find_halflife(spectra, f, p, xmin=None, bin_low=500, coarsen=10):
 
     return hl_fit
 
-# TODO: fudge initial values; figure out fit
-def analyze_hl():
+def analyze_hl(spectra=spectra_Tr_new):
     """
     Automates analysis of halflife data
     """
     l1_expected = np.log(2) / (10.64 * 60 * 60) # lambda for Pb212
     l2_expected = np.log(2) / (60.60 * 60)      # lambda for Bi212
 
-    f_activity = "N0*l1*l2*(exp(-l1*x)-exp(-l2*x))/(l2-l1)"
-    p_activity = "N0,l1=%f,l2=%f" % (l1_expected, l2_expected)
+    f_activity = "N0*l1*l2*(exp(-l1*x)-exp(-l2*x))/(l2-l1)+N2*l2*exp(-l2*x)"
+    p_activity = "N0,l1=%f,l2=%f,N2" % (l1_expected, l2_expected)
 
-    hl_fit = find_halflife(spectra_Tr, f_activity, p_activity,
-                           xmin=5000, coarsen=8)
+    hl_fit = find_halflife(spectra, f_activity, p_activity,
+                           xmin=0, coarsen=3)
+
+    # print "n0 = ", hl_fit.results[0][0], " ± ", np.sqrt(hl_fit.results[1][0][0])
+    # print "n2 = ", hl_fit.results[0][3], " ± ", np.sqrt(hl_fit.results[1][3][3])
 
     hl_Pb212 = np.log(2) / hl_fit.results[0][1]
     hl_Bi212 = np.log(2) / hl_fit.results[0][2]
@@ -219,15 +224,16 @@ def analyze_hl():
     hl_Pb212_err = np.sqrt(hl_fit.results[1][1][1])*np.log(2) / hl_fit.results[0][1]**2
     hl_Bi212_err = np.sqrt(hl_fit.results[1][2][2])*np.log(2) / hl_fit.results[0][2]**2
 
-    return ((hl_Pb212, hl_Bi212), (hl_Pb212_err, hl_Bi212_err),
+    return ((hl_Pb212     / (60 * 60), hl_Bi212     / (60)),
+            (hl_Pb212_err / (60 * 60), hl_Bi212_err / (60)),
             hl_fit.reduced_chi_squareds()[0])
 
 # TODO: update fit parameters for new calibration
-def analyze_energy(spectra=spectra_Tr, bin_to_energy=None):
+def analyze_energy(spectra=spectra_Tr_new, bin_to_energy=None):
     """
     Automates analysis of alpha energy and branching ratio data
     """
-    spectrum_sum = add_spectra(spectra)
+    spectrum_sum = add_spectra(spectra, chronological=True)
 
     # TODO: all these various parameters'll need to be updated for new calib data
     xmin=5.4
