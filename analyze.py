@@ -203,8 +203,8 @@ def calibrate_new(f="a*x+b", p="a,b"):
 
     slope     = calib_fit.results[0][0]
     intercept = calib_fit.results[0][1]
-    slope_err     = calib_fit.results[1][0][0]
-    intercept_err = calib_fit.results[1][1][1]
+    slope_err     = np.sqrt(calib_fit.results[1][0][0])
+    intercept_err = np.sqrt(calib_fit.results[1][1][1])
 
     def bin_to_energy(bin):
         energy = slope * bin + intercept
@@ -254,7 +254,8 @@ def analyze_hl(spectra=spectra_Tr):
             (hl_Pb212_err / (60 * 60), hl_Bi212_err / (60)),
             hl_fit.reduced_chi_squareds()[0])
 
-def analyze_energy_and_branching(spectra=spectra_Tr, bin_to_energy=None):
+# TODO: fudge fit conditions
+def _analyze_energy_and_branching(spectra, bin_to_energy):
     """
     Automates analysis of alpha energy and branching ratio data
     """
@@ -263,21 +264,21 @@ def analyze_energy_and_branching(spectra=spectra_Tr, bin_to_energy=None):
     x0 = [5.607, 5.769, 6.051, 6.090, 8.794]
     n0 = [0.4,   0.7,   12,    1.5,   30]
     s0 = [0.005, 0.005, 0.01,  0.008, 0.01]
-    c0 = [1,     1,     1,     1,     1]
-    t0 = [100,   100,   100,   1,     100]
+    c0 = [0.01,  0.01,  1,     0.001, 1]
+    t0 = [10,    10,    10,    10,    10]
 
     fit_func   = ""
     parameters = ""
     for i in range(len(x0)):
-        fit_func   += "n"  + str(i) + "*G(x-x" + str(i) + ",s" + str(i) + ")" + \
-                      "*(1+c" + str(i) + "*exp(t" + str(i) + "*(x" + str(i) + "-x)))+"
+        fit_func   += "n" + str(i) + "*G(x-x" + str(i) + ",s" + str(i) + ")*(1+" + \
+                      "c" + str(i) + "*exp(abs(t" + str(i) + ")*(x" + str(i) + "-x)))+"
         parameters += "n"  + str(i) + "=" + str(n0[i]) + \
                       ",x" + str(i) + "=" + str(x0[i]) + \
                       ",s" + str(i) + "=" + str(s0[i]) + \
                       ",c" + str(i) + "=" + str(c0[i]) + \
                       ",t" + str(i) + "=" + str(t0[i]) + ","
     fit_func   += "bg"
-    parameters += "bg=1"
+    parameters += "bg=6"
 
     # save having to run calibrate() each time
     if bin_to_energy is None: bin_to_energy = calibrate_new()
@@ -298,8 +299,8 @@ def analyze_energy_and_branching(spectra=spectra_Tr, bin_to_energy=None):
     x0_inds = n0_inds + 1
     s0_inds = n0_inds + 2
 
-    result_vals   =           e_fit.results[0]
-    result_errs = np.diagonal(e_fit.results[1])
+    result_vals =                     e_fit.results[0]
+    result_errs = np.sqrt(np.diagonal(e_fit.results[1]))
 
     # for finding the peak locations
     x0_vals = result_vals[x0_inds]
@@ -320,11 +321,12 @@ def analyze_energy_and_branching(spectra=spectra_Tr, bin_to_energy=None):
     return (peak_locs, peak_areas)
 
 def analyze_energy(spectra=spectra_Tr, bin_to_energy=None):
-    (peak_locs, _) = analyze_energy_and_branching(spectra, bin_to_energy)
+    (peak_locs, _) = _analyze_energy_and_branching(spectra, bin_to_energy)
     return peak_locs
 
+# TODO: account for errors
 def analyze_branching(spectra=spectra_Tr, bin_to_energy=None):
-    (_, (n0_vals, n0_errs)) = analyze_energy_and_branching(spectra, bin_to_energy)
+    (_, (n0_vals, n0_errs)) = _analyze_energy_and_branching(spectra, bin_to_energy)
     total_areas   = np.sum(n0_vals)
     partial_areas = np.sum(n0_vals[:-1])
 
@@ -336,7 +338,7 @@ def analyze_branching(spectra=spectra_Tr, bin_to_energy=None):
 
     return ((total_ratios, total_errs), (partial_ratios, partial_errs))
 
-def analyze_stopping(spectra=spectra_stopping, bin_to_energy=None):
+def analyze_stopping(indices, spectra=spectra_stopping, bin_to_energy=None):
     """
     Automates analysis of stopping power (variable pressure) data
     """
@@ -349,7 +351,7 @@ def analyze_stopping(spectra=spectra_stopping, bin_to_energy=None):
     T_air_err = 2
     dist_err  = 0.1
 
-    def thickness(P_air, P_air_err):
+    def get_thickness(P_air, P_air_err):
         # first, convert pressures from millibar to N / cm^2
         P_air     = 100 * P_air
         P_air_err = 100 * P_air_err
@@ -364,44 +366,50 @@ def analyze_stopping(spectra=spectra_stopping, bin_to_energy=None):
 
     # get thicknesses corresponding to each pressure
     # units are (g / J) cm (N / cm^2) = g N / cm J = 0.01 * (g / cm^2)
-    thicknesses = np.asarray([thickness(P, 5) for P in pressures_stopping])
+    thicknesses = np.asarray([get_thickness(P, 5) for P in pressures_stopping])
 
     # multiply by 100 to get to g / cm^2
-    t     = 100 * thicknesses[:,0]
-    t_err = 100 * thicknesses[:,1]
+    thickness     = 100 * thicknesses[:,0]
+    thickness_err = 100 * thicknesses[:,1]
 
     # save having to run calibrate() each time
-    if bin_to_energy is None: bin_to_energy = calibrate_new()
+    if bin_to_energy is None: bin_to_energy = calibrate_old()
 
-    x0 = [35, 200, 328, 453, 541, 646, 727, 801, 867, 941, 958, 1072]
+    #     0     1     2     3     4     5     6     7     8     9     10    11
+    #     2     x     x     x     x     x     x     x     x     x     x     x
+    x0 = [34,   204,  331,  455,  545,  646,  729,  802,  868,  942,  959,  1074]
+    n0 = [15,   13,   11,   12,   11,   12,   11,   12,   14,   11,   12,   10]
+    s0 = [0.09, 0.09, 0.07, 0.06, 0.05, 0.05, 0.04, 0.04, 0.04, 0.03, 0.03, 0.025]
+    t0 = [2.4,  12,   23,   23,   32,   28,   40,   37,   32,   51,   48,   70]
     x0 = np.array([bin_to_energy(x)[0] for x in x0])
 
-    xlim_offset = bin_to_energy(20)[0]
-    xmin = x0 - xlim_offset
-    xmax = x0 + xlim_offset
+    xmin_offset = bin_to_energy(18)[0]
+    xmax_offset = bin_to_energy(50)[0]
+    xmin = x0 - xmin_offset
+    xmax = x0 + xmax_offset
+
+    xmin[0] = bin_to_energy(7)[0] # account for end of spectrum
+
+    fit_func = "norm*G(x-x0,sigma)*(1+c*exp(abs(t)*(x0-x)))+bg"
+    params   = ["norm=%d,sigma=%f,c=0.1,t=%f,bg=0,x0=%f" % (n, s, t, x)
+                for (x, n, s, t) in zip(x0, n0, s0, t0)]
 
     energy_bins = np.asarray([bin_to_energy(bin) for bin in bins])
 
-    # fit_func = "norm*((eta)*L(x-x0,gamma)+(1-eta)*G(x-x0,sigma))+bg"
-    # params   = "norm=10,eta=0.2,gamma=0.05,sigma=0.05,bg=1,x0="
-    fit_func = "norm*G(x-x0,sigma)+bg"
-    params   = "norm=20,sigma=0.06,bg=1,x0="
-    params   = [params + str(x) for x in x0]
-
     # location of x0 in parameter list
-    peak_loc_ind = 3 # 5
+    peak_loc_ind = 5
 
     n_fits = len(spectra)
 
     peak_loc  = np.zeros(n_fits)
     peak_err  = np.zeros(n_fits)
     good_fits = [True] * n_fits
-    for i in range(n_fits):
-        peak_fit = sm.data.fitter(f=fit_func, p=params[i],
-                               g={'G' : _gaussian, 'L' : _lorentzian})
+    # for i in range(n_fits):
+    for i in indices:
+        peak_fit = sm.data.fitter(f=fit_func, p=params[i], g={'G' : _gaussian})
         peak_fit.set_data( xdata=energy_bins[:,0],  ydata=spectra[i].counts(),
-                       exdata=energy_bins[:,1], eydata=get_yerr_counts(spectra[i]))
-        peak_fit.set(xmin=xmin[i], xmax=xmax[i])
+                          exdata=energy_bins[:,1], eydata=get_yerr_counts(spectra[i]))
+        peak_fit.set(xmin=xmin[i], xmax=xmax[i], coarsen=4)
         peak_fit.fit()
 
         # ignore peaks whose fits don't converge to simplify debugging
@@ -409,23 +417,25 @@ def analyze_stopping(spectra=spectra_stopping, bin_to_energy=None):
             good_fits[i] = False
             continue
 
+        print peak_fit
+
         peak_loc[i] = peak_fit.results[0][peak_loc_ind]
         peak_err[i] = peak_fit.results[1][peak_loc_ind][peak_loc_ind]
         peak_err[i] = np.sqrt(peak_err[i])
 
     good_fits = np.array(good_fits, dtype=bool)
 
-    t     = t    [good_fits]
-    t_err = t_err[good_fits]
+    thickness     = thickness    [good_fits]
+    thickness_err = thickness_err[good_fits]
     peak_loc = peak_loc[good_fits]
     peak_err = peak_err[good_fits]
 
-    return ((t, peak_loc), (t_err, peak_err))
+    return ((thickness, peak_loc), (thickness_err, peak_err))
 
     # fit the peak locations to find the calibration curve
     stopping_fit = sm.data.fitter(f=f, p=p, plot_guess=False)
-    stopping_fit.set_data( xdata=t,      ydata=peak_loc,
-                          exdata=t_err, eydata=peak_err)
+    stopping_fit.set_data( xdata=thickness,      ydata=peak_loc,
+                          exdata=thickness_err, eydata=peak_err)
     stopping_fit.fit()
 
 def print_data_to_columns(sm_fit, fname, residuals=False):
