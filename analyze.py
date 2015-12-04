@@ -2,7 +2,8 @@
 
 import numpy   as np
 import spinmob as sm
-from spectrum import get_spectrum_chn, add_spectra
+from matplotlib import pyplot as plt
+from spectrum   import get_spectrum_chn, add_spectra
 
 # bins used by Maestro
 bins = np.arange(0, 2048)
@@ -30,7 +31,7 @@ spectrum_Am_calib_old = get_spectrum_chn("data/calib_old/calib_Am_25mTorr.Chn")
 spectrum_Am_calib_new = get_spectrum_chn("data/calib_new/calib_Am.Chn")
 
 fnames_Tr  = ["data/long_charge/tr_%03d.Chn" % (n,) for n in range(288)]
-spectra_Tr = [get_spectrum_chn(fname) for fname in fnames_Tr[78:223]]
+spectra_Tr = [get_spectrum_chn(fname) for fname in fnames_Tr]
 
 # in mBar
 pressures_stopping = np.arange(750, 150, -50)
@@ -168,7 +169,7 @@ def calibrate_new(f="a*x+b", p="a,b"):
     Automates calibration of the apparatus;
     returns function which converts bin numbers to energies
     """
-    spectrum_sum = add_spectra(spectra_Tr, chronological=True)
+    spectrum_sum = add_spectra(spectra_Tr[78:223], chronological=True)
 
     # true peak locations
     x0 = [5.607, 5.769, 6.051, 6.090, 8.794]
@@ -236,7 +237,7 @@ def analyze_hl(spectra=spectra_Tr):
     (count_rates, count_errs) = _get_total_count_rates(spectra, 500)
     elapsed_times = _get_total_elapsed_times(spectra) # in seconds
 
-    hl_fit = sm.data.fitter(f=f, p=p)
+    hl_fit = sm.data.fitter(f=f_activity, p=p_activity)
     hl_fit.set_data(xdata=elapsed_times, ydata=count_rates, eydata=count_errs)
     hl_fit.set(coarsen=3)
     hl_fit.fit()
@@ -250,9 +251,11 @@ def analyze_hl(spectra=spectra_Tr):
     hl_Pb212_err = np.sqrt(hl_fit.results[1][1][1])*np.log(2) / hl_fit.results[0][1]**2
     hl_Bi212_err = np.sqrt(hl_fit.results[1][2][2])*np.log(2) / hl_fit.results[0][2]**2
 
-    return ((hl_Pb212     / (60 * 60), hl_Bi212     / (60)),
+    print  ((hl_Pb212     / (60 * 60), hl_Bi212     / (60)),
             (hl_Pb212_err / (60 * 60), hl_Bi212_err / (60)),
             hl_fit.reduced_chi_squareds()[0])
+
+    return hl_fit
 
 # TODO: fudge fit conditions
 def _analyze_energy_and_branching(spectra, bin_to_energy):
@@ -320,24 +323,36 @@ def _analyze_energy_and_branching(spectra, bin_to_energy):
 
     return (peak_locs, peak_areas)
 
-def analyze_energy(spectra=spectra_Tr, bin_to_energy=None):
+def analyze_energy(spectra=spectra_Tr[78:223], bin_to_energy=None):
     (peak_locs, _) = _analyze_energy_and_branching(spectra, bin_to_energy)
     return peak_locs
 
 # TODO: account for errors
-def analyze_branching(spectra=spectra_Tr, bin_to_energy=None):
+def analyze_branching(spectra=spectra_Tr[78:223], bin_to_energy=None):
     (_, (n0_vals, n0_errs)) = _analyze_energy_and_branching(spectra, bin_to_energy)
     total_areas   = np.sum(n0_vals)
     partial_areas = np.sum(n0_vals[:-1])
 
+    print n0_vals
+    print n0_errs
+
     total_ratios   = np.array([    partial_areas / total_areas,
                                1 - partial_areas / total_areas])
-    partial_ratios = np.array([area / partial_areas for area in n0_vals[:-1]])
+    partial_ratios = np.array(n0_vals[:-1]) / partial_areas
 
-    return (total_ratios, partial_ratios)
+    total_area_errs   = np.sqrt(np.sum(n0_errs**2))
+    partial_area_errs = np.sqrt(np.sum(n0_errs[:-1]**2))
+
+    total_errs   = np.sqrt(np.array(
+                    [(partial_area_errs / total_areas)**2 +
+                     (partial_areas * total_area_errs / total_areas**2)**2] * 2))
+    partial_errs = np.sqrt(np.array(
+                    (n0_errs[:-1] / partial_areas)**2 +
+                    (partial_area_errs * n0_vals[:-1] / partial_areas**2)**2))
 
     return ((total_ratios, total_errs), (partial_ratios, partial_errs))
 
+# TODO: don't forget to remove indices argument before running actual analysis
 def analyze_stopping(indices, spectra=spectra_stopping, bin_to_energy=None):
     """
     Automates analysis of stopping power (variable pressure) data
@@ -345,11 +360,11 @@ def analyze_stopping(indices, spectra=spectra_stopping, bin_to_energy=None):
     M_air = 28.96 # g / mol
     T_air = 294   # K
     R     = 8.314 # J / mol K    (negligible error)
-    dist  = 4.8   # cm
+    dist  = 4.85  # cm
 
     M_air_err = 0.01
     T_air_err = 2
-    dist_err  = 0.1
+    dist_err  = 0.03
 
     def get_thickness(P_air, P_air_err):
         # first, convert pressures from millibar to N / cm^2
@@ -364,9 +379,12 @@ def analyze_stopping(indices, spectra=spectra_stopping, bin_to_energy=None):
 
         return (t, t_err)
 
+    # rough error in pressure measurements
+    P_air_err = 5
+
     # get thicknesses corresponding to each pressure
     # units are (g / J) cm (N / cm^2) = g N / cm J = 0.01 * (g / cm^2)
-    thicknesses = np.asarray([get_thickness(P, 5) for P in pressures_stopping])
+    thicknesses = np.asarray([get_thickness(P, P_air_err) for P in pressures_stopping])
 
     # multiply by 100 to get to g / cm^2
     thickness     = 100 * thicknesses[:,0]
@@ -376,11 +394,12 @@ def analyze_stopping(indices, spectra=spectra_stopping, bin_to_energy=None):
     if bin_to_energy is None: bin_to_energy = calibrate_old()
 
     #     0     1     2     3     4     5     6     7     8     9     10    11
-    #     2     x     x     x     x     x     x     x     x     x     x     x
+    #     c2    x     x     x     x     x     x     x     x     x     x     x
     x0 = [34,   204,  331,  455,  545,  646,  729,  802,  868,  942,  959,  1074]
     n0 = [15,   13,   11,   12,   11,   12,   11,   12,   14,   11,   12,   10]
     s0 = [0.09, 0.09, 0.07, 0.06, 0.05, 0.05, 0.04, 0.04, 0.04, 0.03, 0.03, 0.025]
-    t0 = [2.4,  12,   23,   23,   32,   28,   40,   37,   32,   51,   48,   70]
+    # t0 = [2.4,  12,   23,   23,   32,   28,   40,   37,   32,   51,   48,   70]
+    t0 = [2.4,  -20,    2,    3,    2,    8,    0,    7,    2,    1,    8,    0]
     x0 = np.array([bin_to_energy(x)[0] for x in x0])
 
     xmin_offset = bin_to_energy(18)[0]
@@ -390,65 +409,78 @@ def analyze_stopping(indices, spectra=spectra_stopping, bin_to_energy=None):
 
     xmin[0] = bin_to_energy(7)[0] # account for end of spectrum
 
-    fit_func = "norm*G(x-x0,sigma)*(1+c*exp(abs(t)*(x0-x)))+bg"
-    params   = ["norm=%d,sigma=%f,c=0.1,t=%f,bg=0,x0=%f" % (n, s, t, x)
-                for (x, n, s, t) in zip(x0, n0, s0, t0)]
+    # fit_func = "norm*G(x-x0,sigma)*(1+c*exp(abs(t)*(x0-x)))+bg"
+    # params   = ["norm=%d,sigma=%f,c=0.008,t=%f,bg=0,x0=%f" % (n, s, t, x)
+    #             for (x, n, s, t) in zip(x0, n0, s0, t0)]
 
-    energy_bins = np.asarray([bin_to_energy(bin) for bin in bins])
+    # energy_bins = np.asarray([bin_to_energy(bin) for bin in bins])
 
-    # location of x0 in parameter list
-    peak_loc_ind = 5
+    # # location of x0 in parameter list
+    # peak_loc_ind = 5
 
-    n_fits = len(spectra)
+    # n_fits = len(spectra)
 
-    peak_loc  = np.zeros(n_fits)
-    peak_err  = np.zeros(n_fits)
-    good_fits = [True] * n_fits
-    # for i in range(n_fits):
-    for i in indices:
-        peak_fit = sm.data.fitter(f=fit_func, p=params[i], g={'G' : _gaussian})
-        peak_fit.set_data( xdata=energy_bins[:,0],  ydata=spectra[i].counts(),
-                          exdata=energy_bins[:,1], eydata=get_yerr_counts(spectra[i]))
-        peak_fit.set(xmin=xmin[i], xmax=xmax[i], coarsen=4)
-        peak_fit.fit()
+    # peak_loc  = np.zeros(n_fits)
+    # peak_err  = np.zeros(n_fits)
+    # good_fits = [True] * n_fits
+    # # for i in range(n_fits):
+    # for i in indices:
+    #     peak_fit = sm.data.fitter(f=fit_func, p=params[i], g={'G' : _gaussian})
+    #     peak_fit.set_data( xdata=energy_bins[:,0],  ydata=spectra[i].counts(),
+    #                       exdata=energy_bins[:,1], eydata=get_yerr_counts(spectra[i]))
+    #     peak_fit.set(xmin=xmin[i], xmax=xmax[i], coarsen=2)
+    #     peak_fit.fit()
 
-        # ignore peaks whose fits don't converge to simplify debugging
-        if peak_fit.results[1] is None:
-            good_fits[i] = False
-            continue
+    #     # ignore peaks whose fits don't converge to simplify debugging
+    #     if peak_fit.results[1] is None:
+    #         good_fits[i] = False
+    #         continue
 
-        print peak_fit
+    #     print peak_fit
 
-        peak_loc[i] = peak_fit.results[0][peak_loc_ind]
-        peak_err[i] = peak_fit.results[1][peak_loc_ind][peak_loc_ind]
-        peak_err[i] = np.sqrt(peak_err[i])
+    #     peak_loc[i] = peak_fit.results[0][peak_loc_ind]
+    #     peak_err[i] = peak_fit.results[1][peak_loc_ind][peak_loc_ind]
+    #     peak_err[i] = np.sqrt(peak_err[i])
 
-    good_fits = np.array(good_fits, dtype=bool)
+    # good_fits = np.array(good_fits, dtype=bool)
 
-    thickness     = thickness    [good_fits]
-    thickness_err = thickness_err[good_fits]
-    peak_loc = peak_loc[good_fits]
-    peak_err = peak_err[good_fits]
+    # thickness     = thickness    [good_fits]
+    # thickness_err = thickness_err[good_fits]
+    # peak_loc = peak_loc[good_fits]
+    # peak_err = peak_err[good_fits]
 
-    return ((thickness, peak_loc), (thickness_err, peak_err))
+    # temporary guesses
+    peak_loc = x0
+    peak_err = 0 * x0 + 0.1
 
-    # fit the peak locations to find the calibration curve
-    stopping_fit = sm.data.fitter(f=f, p=p, plot_guess=False)
-    stopping_fit.set_data( xdata=thickness,      ydata=peak_loc,
-                          exdata=thickness_err, eydata=peak_err)
-    stopping_fit.fit()
+    dE =  peak_loc[1:] -  peak_loc[:-1]
+    dt = thickness[1:] - thickness[:-1]
+
+    dEdt = dE / dt
+    dEdt_err = np.sqrt((     peak_err[1:]**2 +      peak_err[:-1]**2) * (dEdt / dE)**2 +
+                       (thickness_err[1:]**2 + thickness_err[:-1]**2) * (dEdt / dt)**2)
+
+    t_mean = (thickness[1:] + thickness[:-1]) / 2
+    t_err = np.sqrt((thickness_err[1:]**2 + thickness_err[:-1]**2)) / 2
+
+    S = -t_mean * dEdt / dist
+    S_err = np.sqrt((   t_err * (S / t_mean))**2 +
+                    (dEdt_err * (S /   dEdt))**2 +
+                    (dist_err * (S /   dist))**2)
+
+    return (t_mean, S, S_err)
 
 def print_data_to_columns(sm_fit, fname, residuals=False):
     xmin = sm_fit._settings['xmin']
     xmax = sm_fit._settings['xmax']
 
-    xdata  = sm_fit.get_data()[0][0]
+    xdata  = sm_fit._xdata_massaged[0]
     i_used = (xdata >= xmin) & (xdata <= xmax)
     xdata  = xdata[i_used]
 
     if not residuals:
-        ydata  = sm_fit.get_data()[1][0][i_used]
-        eydata = sm_fit.get_data()[2][0][i_used]
+        ydata  = sm_fit._ydata_massaged[0]
+        eydata = sm_fit._eydata_massaged[0]
     else:
         ydata  = sm_fit.studentized_residuals()[0]
         eydata = (0 * ydata) + 1
