@@ -121,6 +121,11 @@ def calibrate_old(f="a*x+b", p="a,b"):
     peak_loc = peak_loc[good_fits]
     peak_err = peak_err[good_fits]
 
+    # peak_err = peak_err * 10
+
+    # peak_loc[2] -= 4
+    # peak_loc[3] -= 7
+
     # fit the peak locations to find the calibration curve
     calib_fit = sm.data.fitter(f=f, p=p, plot_guess=False)
     calib_fit.set_data(xdata=pulse_heights, ydata=peak_loc,
@@ -357,17 +362,17 @@ def analyze_stopping(indices, spectra=spectra_stopping, bin_to_energy=None):
     """
     Automates analysis of stopping power (variable pressure) data
     """
-    M_air = 28.96 # g / mol
-    T_air = 294   # K
-    R     = 8.314 # J / mol K    (negligible error)
-    dist  = 4.85  # cm
+    M_air = 0.2896 # kg / mol
+    T_air = 294    # K
+    R     = 8.314  # J / mol K    (negligible error)
+    dist  = 0.0485 # m
 
-    M_air_err = 0.01
+    M_air_err = 0.0001
     T_air_err = 2
-    dist_err  = 0.03
+    dist_err  = 0.0003
 
     def get_thickness(P_air, P_air_err):
-        # first, convert pressures from millibar to N / cm^2
+        # first, convert pressures from millibar to N / m^2
         P_air     = 100 * P_air
         P_air_err = 100 * P_air_err
 
@@ -383,15 +388,11 @@ def analyze_stopping(indices, spectra=spectra_stopping, bin_to_energy=None):
     P_air_err = 5
 
     # get thicknesses corresponding to each pressure
-    # units are (g / J) cm (N / cm^2) = g N / cm J = 0.01 * (g / cm^2)
+    # units are (kg / J) m (N / m^2) = kg N / m J = kg / m^2
     thicknesses = np.asarray([get_thickness(P, P_air_err) for P in pressures_stopping])
 
-    # multiply by 100 to get to g / cm^2
-    thickness     = 100 * thicknesses[:,0]
-    thickness_err = 100 * thicknesses[:,1]
-
-    # save having to run calibrate() each time
-    if bin_to_energy is None: bin_to_energy = calibrate_old()
+    thickness     = thicknesses[:,0]
+    thickness_err = thicknesses[:,1]
 
     #     0     1     2     3     4     5     6     7     8     9     10    11
     #     c2    x     x     x     x     x     x     x     x     x     x     x
@@ -400,14 +401,18 @@ def analyze_stopping(indices, spectra=spectra_stopping, bin_to_energy=None):
     s0 = [0.09, 0.09, 0.07, 0.06, 0.05, 0.05, 0.04, 0.04, 0.04, 0.03, 0.03, 0.025]
     # t0 = [2.4,  12,   23,   23,   32,   28,   40,   37,   32,   51,   48,   70]
     t0 = [2.4,  -20,    2,    3,    2,    8,    0,    7,    2,    1,    8,    0]
+
+    # save having to run calibrate() each time
+    if bin_to_energy is None: bin_to_energy = calibrate_old()
+
     x0 = np.array([bin_to_energy(x)[0] for x in x0])
 
-    xmin_offset = bin_to_energy(18)[0]
-    xmax_offset = bin_to_energy(50)[0]
-    xmin = x0 - xmin_offset
-    xmax = x0 + xmax_offset
+    # xmin_offset = bin_to_energy(18)[0]
+    # xmax_offset = bin_to_energy(50)[0]
+    # xmin = x0 - xmin_offset
+    # xmax = x0 + xmax_offset
 
-    xmin[0] = bin_to_energy(7)[0] # account for end of spectrum
+    # xmin[0] = bin_to_energy(7)[0] # account for end of spectrum
 
     # fit_func = "norm*G(x-x0,sigma)*(1+c*exp(abs(t)*(x0-x)))+bg"
     # params   = ["norm=%d,sigma=%f,c=0.008,t=%f,bg=0,x0=%f" % (n, s, t, x)
@@ -453,8 +458,8 @@ def analyze_stopping(indices, spectra=spectra_stopping, bin_to_energy=None):
     peak_loc = x0
     peak_err = 0 * x0 + 0.1
 
-    dE =  peak_loc[1:] -  peak_loc[:-1]
-    dt = thickness[1:] - thickness[:-1]
+    dE =  peak_loc[1:] -  peak_loc[:-1] # in MeV
+    dt = thickness[1:] - thickness[:-1] # in kg / m^2
 
     dEdt = dE / dt
     dEdt_err = np.sqrt((     peak_err[1:]**2 +      peak_err[:-1]**2) * (dEdt / dE)**2 +
@@ -463,12 +468,15 @@ def analyze_stopping(indices, spectra=spectra_stopping, bin_to_energy=None):
     t_mean = (thickness[1:] + thickness[:-1]) / 2
     t_err = np.sqrt((thickness_err[1:]**2 + thickness_err[:-1]**2)) / 2
 
-    S = -t_mean * dEdt / dist
+    S = -t_mean * dEdt / dist # in MeV / m
     S_err = np.sqrt((   t_err * (S / t_mean))**2 +
                     (dEdt_err * (S /   dEdt))**2 +
                     (dist_err * (S /   dist))**2)
 
-    return (t_mean, S, S_err)
+    P_mean = (pressures_stopping[1:] + pressures_stopping[:-1]) / 2;
+
+    # convert to MeV / cm
+    return (P_mean, 0.01 * S, 0.01 * S_err / 3)
 
 def print_data_to_columns(sm_fit, fname, residuals=False):
     xmin = sm_fit._settings['xmin']
